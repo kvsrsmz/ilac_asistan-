@@ -1,6 +1,7 @@
 import os
 import base64
 import traceback
+import json
 from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 from flask_cors import CORS
@@ -9,7 +10,7 @@ import requests
 app = Flask(__name__)
 CORS(app)
 
-OPENROUTER_API_KEY = "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"
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "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"
 
 UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -31,12 +32,15 @@ def openrouter_chat_completion(messages, model="gpt-3.5-turbo"):
     response.raise_for_status()
     return response.json()
 
-def extract_drug_name_from_image(image_path):
+def extract_drug_name_from_image_vlm(image_path):
     with open(image_path, "rb") as img_file:
         img_base64 = base64.b64encode(img_file.read()).decode()
 
     messages = [
-        {"role": "system", "content": "Bir eczacı gibi davran. İlaç kutusu görselindeki ilacın adını ve dozajını sadece yaz."},
+        {
+            "role": "system",
+            "content": "Bir eczacı gibi davran. İlaç kutusu görselindeki ilacın adını ve dozajını sadece yaz."
+        },
         {
             "role": "user",
             "content": [
@@ -46,7 +50,7 @@ def extract_drug_name_from_image(image_path):
         }
     ]
 
-    res_json = openrouter_chat_completion(messages, model="gpt-4o-mini")  # OpenRouter model isimleri farklı olabilir, kontrol et
+    res_json = openrouter_chat_completion(messages, model="gpt-4o-mini")
     return res_json["choices"][0]["message"]["content"].strip()
 
 def query_drug_info(drug_name):
@@ -55,29 +59,38 @@ def query_drug_info(drug_name):
 - kullanım alanları
 - yaygın yan etkileri
 - dikkat edilmesi gereken etkileşimleri
-kısa, madde madde ve sade şekilde yaz.
+kısa, madde madde ve sade şekilde JSON formatında yanıtla.
 
-Kullanım:
-- ...
-
-Yan etkiler:
-- ...
-
-Uyarılar:
-- ...
+JSON formatı şöyle olmalı:
+{{
+  "usage": ["..."],
+  "side_effects": ["..."],
+  "warnings": ["..."]
+}}
 """
-
     messages = [
-        {"role": "system", "content": "Deneyimli bir eczacı gibi kısa ve sade anlat."},
+        {"role": "system", "content": "Bir eczacı gibi kısa ve sade anlat."},
         {"role": "user", "content": prompt}
     ]
+    res_json = openrouter_chat_completion(messages, model="gpt-4o-mini")  # gpt-4o-mini kullanıyoruz
+    raw_text = res_json["choices"][0]["message"]["content"].strip()
 
-    res_json = openrouter_chat_completion(messages, model="gpt-3.5-turbo")
-    return res_json["choices"][0]["message"]["content"].strip()
+    try:
+        # JSON parse etmeye çalış
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError:
+        # Parse edilemezse boş JSON dön
+        parsed = {"usage": [], "side_effects": [], "warnings": []}
+
+    # Ham metni de ekleyelim frontend için
+    parsed["raw_text"] = raw_text
+    return parsed
+
 
 @app.route("/get-drug-info", methods=["POST"])
 def process_input():
     try:
+        # JSON formatında sadece ilaç ismi geldiğinde
         if request.is_json:
             data = request.get_json()
             drug_name = data.get("drug_name", "").strip()
@@ -85,6 +98,7 @@ def process_input():
                 info = query_drug_info(drug_name)
                 return jsonify({"drug_name": drug_name, "drug_info": info})
 
+        # Görsel yüklendiğinde
         if 'image' in request.files:
             file = request.files['image']
             if file.filename == '':
@@ -94,10 +108,12 @@ def process_input():
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             file.save(filepath)
 
-            drug_name = extract_drug_name_from_image(filepath)
+            # VLM ile ilaç adını çıkar
+            drug_name = extract_drug_name_from_image_vlm(filepath)
             if not drug_name:
                 return jsonify({"error": "Görselden ilaç adı çıkarılamadı"}), 500
 
+            # LLM ile ilaç bilgilerini getir
             info = query_drug_info(drug_name)
             return jsonify({"drug_name": drug_name, "drug_info": info})
 

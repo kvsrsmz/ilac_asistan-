@@ -1,96 +1,98 @@
-// front-end/App.js
 import React, { useState } from "react";
-import ImageUpload from "./components/ImageUpload";
-import TextInputForm from "./components/TextInputForm";
 import DrugExplanationCard from "./components/DrugExplanationCard";
 
 function App() {
-  const [inputType, setInputType] = useState(null);
+  const [inputType, setInputType] = useState(null); // 'text' veya 'image'
   const [drugName, setDrugName] = useState("");
   const [explanation, setExplanation] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
 
-  const handleImageUpload = async (file) => {
+  const handleTextSubmit = async () => {
+    if (!drugName.trim()) return alert("Lütfen ilaç adını girin.");
     setLoading(true);
-    setError("");
-    setExplanation(null);
-    setDrugName("");
-
-    const formData = new FormData();
-    formData.append("image", file);
 
     try {
-      const res = await fetch("/get-drug-info", {
+      const res = await fetch("http://localhost:5000/get-drug-info", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ drug_name: drugName })
       });
 
       const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || "Görselden bilgi alınamadı");
-
-      setDrugName(data.drug_name);
-      setExplanation(data);
+      if (data.error) {
+        alert(data.error);
+      } else {
+        setExplanation(data.drug_info); // JSON zaten backend’de düzenlendi
+      }
     } catch (err) {
-      setError(err.message);
+      console.error(err);
+      alert("Sunucu hatası oluştu.");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleTextSubmit = async (drug) => {
+  const handleImageSubmit = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
     setLoading(true);
-    setError("");
-    setExplanation(null);
-    setDrugName(drug);
+    const formData = new FormData();
+    formData.append("image", file);
 
     try {
-      const res = await fetch("/get-drug-info", {
+      const res = await fetch("http://localhost:5000/get-drug-info", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ drug_name: drug }),
+        body: formData
       });
 
       const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || "Bilgi alınamadı");
-
-      setExplanation(data);
+      if (data.error) {
+        alert(data.error);
+      } else {
+        setDrugName(data.drug_name);
+        setExplanation(data.drug_info);
+      }
     } catch (err) {
-      setError(err.message);
+      console.error(err);
+      alert("Sunucu hatası oluştu.");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div style={{ textAlign: "center", padding: "20px" }}>
-      <h1>💊 İlaç Tanıma ve Açıklama Sistemi</h1>
-      {!inputType && (
+    <div style={{ padding: 20 }}>
+      <h1>💊 İlaç Asistanı</h1>
+
+      <div style={{ marginBottom: 20 }}>
+        <button onClick={() => setInputType("text")}>İlaç Adı Gir</button>
+        <button onClick={() => setInputType("image")}>Görsel Yükle</button>
+      </div>
+
+      {inputType === "text" && (
         <div>
-          <button onClick={() => setInputType("image")} style={btnStyle}>📷 Görsel Yükle</button>
-          <button onClick={() => setInputType("text")} style={btnStyle}>✍ İlaç Yaz</button>
+          <input
+            type="text"
+            value={drugName}
+            onChange={(e) => setDrugName(e.target.value)}
+            placeholder="İlaç adını yazın"
+          />
+          <button onClick={handleTextSubmit} disabled={loading}>
+            {loading ? "Yükleniyor..." : "Sorgula"}
+          </button>
         </div>
       )}
-      {inputType === "image" && <ImageUpload onImageUpload={handleImageUpload} loading={loading} />}
-      {inputType === "text" && <TextInputForm onSubmitDrug={handleTextSubmit} loading={loading} />}
 
-      {loading && <p>Yükleniyor...</p>}
-      {error && <p style={{ color: "red" }}>{error}</p>}
+      {inputType === "image" && (
+        <div>
+          <input type="file" accept="image/*" onChange={handleImageSubmit} />
+        </div>
+      )}
 
-      <DrugExplanationCard drugName={drugName} explanation={explanation} />
+      {explanation && <DrugExplanationCard drugName={drugName} explanation={explanation} />}
     </div>
   );
 }
-
-const btnStyle = {
-  margin: "10px",
-  padding: "10px 20px",
-  fontSize: "16px",
-  borderRadius: "8px",
-  border: "none",
-  backgroundColor: "#28a745",
-  color: "white",
-  cursor: "pointer",
-};
 
 export default App;
